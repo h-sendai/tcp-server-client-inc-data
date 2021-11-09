@@ -17,6 +17,7 @@
 int debug = 0;
 int enable_quick_ack = 0;
 int set_so_sndbuf_size = 0;
+unsigned long do_error_at = 0;
 
 int print_result(struct timeval start, struct timeval stop, int so_snd_buf, unsigned long long send_bytes)
 {
@@ -84,12 +85,21 @@ int child_proc(int connfd, int bufsize, int sleep_usec)
     fprintfwt(stderr, "server: SO_SNDBUF: %d (init)\n", so_snd_buf);
 
     gettimeofday(&start, NULL);
+    unsigned long write_count = 0;
     for ( ; ; ) {
         if (enable_quick_ack) {
             int qack = 1;
             setsockopt(connfd, IPPROTO_TCP, TCP_QUICKACK, &qack, sizeof(qack));
         }
         fill_buf_inc_int(buf, bufsize);
+        if (do_error_at > 0) {
+            if (write_count == do_error_at) {
+                buf[0] = 0xff;
+                buf[1] = 0xff;
+                buf[2] = 0xff;
+                buf[3] = 0xff;
+            }
+        }
         n = write(connfd, buf, bufsize);
         if (n < 0) {
             gettimeofday(&stop, NULL);
@@ -113,6 +123,7 @@ int child_proc(int connfd, int bufsize, int sleep_usec)
         }
         else {
             send_bytes += n;
+            write_count += 1;
         }
         if (sleep_usec > 0) {
             bz_usleep(sleep_usec);
@@ -135,11 +146,12 @@ void sig_chld(int signo)
 int usage(void)
 {
     char *msg =
-"Usage: server [-b bufsize (16k)] [-s sleep_usec (0)] [-q] [-S so_sndbuf]\n"
-"-b bufsize:    one send size (may add k for kilo, m for mega)\n"
-"-s sleep_usec: sleep useconds after write\n"
-"-q:            enable quick ack\n"
-"-S: so_sndbuf: set socket send buffer size\n";
+"Usage: server [-b bufsize (16k)] [-s sleep_usec (0)] [-q] [-E do_error_at] [-S so_sndbuf]\n"
+"-b bufsize:     one send size (may add k for kilo, m for mega)\n"
+"-s sleep_usec:  sleep useconds after write\n"
+"-q:             enable quick ack\n"
+"-E do_error_at: send error data at do_error_at times write()\n"
+"-S: so_sndbuf:  set socket send buffer size\n";
 
     fprintf(stderr, msg);
 
@@ -157,7 +169,7 @@ int main(int argc, char *argv[])
     int bufsize = 16*1024;
     int sleep_usec = 0;
 
-    while ( (c = getopt(argc, argv, "b:dhqs:S:")) != -1) {
+    while ( (c = getopt(argc, argv, "b:dhqs:E:S:")) != -1) {
         switch (c) {
             case 'b':
                 bufsize = get_num(optarg);
@@ -173,6 +185,9 @@ int main(int argc, char *argv[])
                 break;
             case 's':
                 sleep_usec = get_num(optarg);
+                break;
+            case 'E':
+                do_error_at = get_num(optarg);
                 break;
             case 'S':
                 set_so_sndbuf_size = get_num(optarg);
